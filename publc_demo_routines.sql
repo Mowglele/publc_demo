@@ -138,15 +138,13 @@ CREATE DEFINER=`root`@`localhost` PROCEDURE `SP_PROCESS_ACTION`(
 BEGIN
 DECLARE currBenHash BIGINT;
 DECLARE currBenShare BIGINT;
-DECLARE sumAction BIGINT;
+DECLARE sumActionAmount BIGINT;
 DECLARE curDone INT DEFAULT 0;
-DECLARE hashExists TINYINT;
 
 DECLARE cur CURSOR FOR SELECT ben_hash, ben_share FROM queue_ai WHERE actionId = currActionId;
 DECLARE CONTINUE HANDLER FOR NOT FOUND SET curDone = 1;
 
 START TRANSACTION;
-	SELECT sum(ben_share) FROM queue_ai WHERE actionId = currActionId INTO sumAction;
 
 	OPEN cur;
 	actionItems: LOOP
@@ -154,17 +152,18 @@ START TRANSACTION;
 		IF curDone THEN
 			LEAVE actionItems;
 		END IF;
-        SELECT count(*) FROM ledger WHERE hash = currBenHash INTO hashExists;
-        IF NOT hashExists THEN
-			INSERT INTO ledger (hash, balance) VALUES (currBenHash, 0);
-        END IF;
-        UPDATE bank SET balance = balance - currBenShare WHERE balance >= 0; -- The WHERE is just because in Safe Update mode you're not allowed to perform an UPDATE without a WHERE
-        UPDATE ledger SET balance = balance + currBenShare WHERE hash = currBenHash;
+        
+		INSERT INTO ledger (hash, balance) VALUES (currBenHash, currBenShare) 
+        ON DUPLICATE KEY UPDATE balance = balance + currBenShare;
 	END LOOP;
 	CLOSE cur;
 
+	SELECT sum(ben_share) FROM queue_ai WHERE actionId = currActionId INTO sumActionAmount;
+	UPDATE bank SET balance = balance - sumActionAmount WHERE balance >= 0; -- The WHERE is just because in Safe Update mode you're not allowed to perform an UPDATE without a WHERE
+
 	-- Due to foreign key contraints, deleting the item from the queue will cascade to its action items in queue_ai
 	DELETE FROM queue WHERE actionId = currActionId;
+
 COMMIT;
 
 END ;;
